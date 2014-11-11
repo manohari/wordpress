@@ -1,4 +1,4 @@
-=== Simple Links Importer ===
+=== Import Page From Blog ===
 Contributor: Manohari Vagicherla
 
 Tags: blog, import, pages,import blog page
