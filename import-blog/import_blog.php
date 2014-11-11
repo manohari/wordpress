@@ -153,7 +153,7 @@ if ( !class_exists('BlogImporter') )  {
                         update_post_meta($id, '_ise_old_sidebar', $custom); 
                 }
 
-                _e('done.', 'html-import-images');
+                _e('done.');
                 echo '</p>';
                 flush();
             } // if empty
