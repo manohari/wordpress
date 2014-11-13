@@ -3,122 +3,111 @@
 Plugin Name: Import Blog Page
 Plugin URI: http://wordpress.org/extend/plugins/
 Description: Import pages from your blog.
-Version: 1.0
+Version: 1.1
 Author: Manohari Vagicherla
-*/
-if ( !defined('WP_LOAD_IMPORTERS') )
-	return;
+ */
 
-// Load Importer API
-require_once ABSPATH . 'wp-admin/includes/import.php';
-
-if ( !class_exists( 'WP_Importer' ) ) {
-    $class_wp_importer = ABSPATH . 'wp-admin/includes/class-wp-importer.php';
-    if ( file_exists( $class_wp_importer ) ) {
-        require_once $class_wp_importer;
-    }
-}
-if ( !class_exists('BlogImporter') )  {
-    class BlogImporter extends WP_Importer {	
-        function header() 
-        {
-            echo '<div class="wrap">';
-            screen_icon();
-            echo '<h2>'.__('Import Content from blog with public URL').'</h2><br />';
+if ( !class_exists('BlogImporter') ) {
+    class BlogImporter {
+        var $plugin_domain='BlogImporter';
+        var $getContent = array();
+        var $appError = '';
+        function BlogImporter()  {	
+            $this->plugin_url = defined('WP_PLUGIN_URL') ? WP_PLUGIN_URL . '/' . dirname(plugin_basename(__FILE__)) : trailingslashit(get_bloginfo('wpurl')) . PLUGINDIR . '/' . dirname(plugin_basename(__FILE__)); 
+            $this->error = new WP_Error();
+            $this->init_errors();
+            // Add Options Page
+            add_action('admin_menu',  array(&$this, 'admin_menu'));
         }
-
-        function footer() 
-        {
-            echo '</div>';
-        }
-
-        function greet()
-        {	
-            if(empty($_POST["site"])) 
-            {	
-                echo 'Hi, this tool can help you to copy your pages from your old blog online. <br \><br \>'.
-                     'Please input the URL <b>(including "http://" or "https://")</b> <br \><br \>';
-                echo '<form action="admin.php?import=import_blog&amp;step=1" method="post">'.
-                         'URL: <input type="text" name="site" size="50"><br \><br \>'.	 
-                         '<input type="submit" value="get Content">'.
-                         '</form>';	
-            }        
-        }
-
-        function get_blog_content()
-        {
-            if(isset($_POST["site"]) && !empty($_POST["site"])){
-                $url = $_POST["site"];                
+        function admin_menu() {          	
+            // submenu pages           
+            add_submenu_page('post-new.php', __('Add CrossPost', $this->plugin_domain) ,  __('CrossPost', $this->plugin_domain)	, 1 	, 'add-crosspost',  array(&$this, 'display_form') ); 	  	 
+        } 
+        // Init error messages	
+	function init_errors()
+	{
+            $this->error->add('e_url', __('Please enter URL.',$this->plugin_domain));			
+            $this->error->add('e_protocol', __('Please add "http://" or "https://" before the domain name.',$this->plugin_domain));           
+            $this->error->add('e_importError', __('No content to import.Please check the page',$this->plugin_domain));
+            $this->error->add('e_importBlogError', __('Could not import the data.Something went wrong.',$this->plugin_domain));			
+            $this->error->add('e_divcontent', __('No content exist in div.', $this->plugin_domain));
+	}
+        // Retrieve an error message
+	function my_error($e = '') {		
+		$msg = $this->error->get_error_message($e);		
+		if ($msg == null) {
+			return __("Unknown error occured, please contact the administrator.", $this->plugin_domain);
+		}
+		return $msg;
+	}
+        function display_form() {            			
+            $page=trim($_GET['page']);
+            $published=isset($_POST['publish']);            	
+            $get_div_content= trim($_POST['contentdivid']);
+            if($page == 'add-crosspost') {
+                $url= trim($_POST['url']);										
+                if ($published)
+                {
+                    if (!empty($url) && isset($url)) {                                        
+                        $this->cross_post_info = "<h3>Cross post from </h3> <a href='".$url."'>$url</a>";                        
+                        if((stristr($url,'http://') || stristr($url,'https://') ) === false)
+                        {                             
+                            $this->appError = $this->my_error('e_protocol');                            
+                        } 
+                        else{
+                            if( (@file_get_contents($url)) === false ) {
+                                $this->appError = $this->my_error('e_importError');
+                            }else{
+                                $this->tempfile = file_get_contents($url);
+                                if(!empty($get_div_content)) {
+                                    $this->getContent = explode(",",$get_div_content);                                    
+                                }                                   
+                               $post_id = $this->insert_pageContent();                                
+                            }   
+                        }                            							
+                    }
+                    else {						
+                        $this->appError = $this->my_error('e_url');
+                    }
+                }
+                include( 'crosspost.php');
             }
-            else {
-                echo "<h3>Please add the url from which site you need to pick data</h3><a href='".$_SERVER['HTTP_REFERER']."'>Go Back </a>";
-                exit;
-            }
-            if((stristr($url,'http://') || stristr($url,'https://') ) === false)
-            {
-                echo '<h3>Please add "http://" or "https://" before the domain name.</h3><a href="'.$_SERVER['HTTP_REFERER'].'">Go Back </a>';
-                exit;
-            }            
-            if( (@file_get_contents($url)) === false ) {
-                echo "<h3>Web page doesnt exist with the given URL.Please check the URL again</h3>.<a href='".$_SERVER['HTTP_REFERER']."'>Go Back </a>";
-                exit;
-            }            
-            $this->tempfile = @file_get_contents($url);                
-            if(empty($this->tempfile)) {
-                echo "<h3>Not able to read the content from the page.Please check the URL given.</h3><a href='".$_SERVER['HTTP_REFERER']."'>Go Back </a>";
-                exit;
-            }
-            $this->insert_pageContent();           
         }
+        
         function insert_pageContent()
         {
             set_magic_quotes_runtime(0);
-            $this->get_post();
-            $this->find_images();
+            $postid = $this->get_post();           
+            if(!empty($postid)) {
+                $this->find_images();
+                return $postid;
+            }
         }
-
         function find_images() {
-            echo '<h2>'.__( 'Importing images...').'</h2>';
-            $results = '';
-            foreach ($this->filearr as $id => $path) {
-                $results .= $this->import_images($id, $path);
-            }
-            if (!empty($results)) {
-                echo $results;
-            }
-            echo '<h3>';
-            printf(__('All done. <a href="%s">Go to the Media Library.</a>'), 'media.php');
-            echo '</h3>';        
+            if(is_array($this->filearr)) {
+                $postid = key($this->filearr);
+                $this->import_images($postid);
+            }             
         }
-
-                        // largely borrowed from the Add Linked Images to Gallery plugin, except we do a simple str_replace at the end
-        function import_images($id, $path) {
-            $post = get_post($id);		
-            $result = array();
+        // largely borrowed from the Add Linked Images to Gallery plugin, except we do a simple str_replace at the end
+        function import_images($id) {
+            $post_data = get_post($id); //post array retreived based on postid
             $srcs = array();
-            $content = $post->post_content;
-            $title = $post->post_title;
-            if (empty($title)) $title = __('(no title)', 'html-import');
+            $content = $post_data->post_content;
+            $title = $post_data->post_title;
+            if (empty($title)) { 
+                $title = __('(no title)'); 
+                
+            }
             $update = false;
 
             // find all src attributes
-            preg_match_all('/<img[^>]* src=[\'"]?([^>\'" ]+)/', $post->post_content, $matches);
+            preg_match_all('/<img[^>]* src=[\'"]?([^>\'" ]+)/', $post_data->post_content, $matches);
             for ($i=0; $i<count($matches[0]); $i++) {
                     $srcs[] = $matches[1][$i];
             }
-
-            // also check custom fields
-            $custom = get_post_meta($id, '_ise_old_sidebar', true);
-            preg_match_all('/<img[^>]* src=[\'"]?([^>\'" ]+)/', $custom, $matches);
-            for ($i=0; $i<count($matches[0]); $i++) {
-                    $srcs[] = $matches[1][$i];
-            }
-
-            if (!empty($srcs)) {
-                $count = count($srcs);
-
-                echo "<p>";
-                printf(_n('Found %d image in <a href="%s">%s</a>. Importing... ', 'Found %d images in <a href="%s">%s</a>. Importing... ', $count), $count, get_permalink($post->ID), $title);
+            
+            if (!empty($srcs)) {                         
                 foreach ($srcs as $src) {
                     // src="http://foo.com/images/foo"
                     if (preg_match('/^http:\/\//', $src) || preg_match('/^https:\/\//', $src)) { 
@@ -130,7 +119,7 @@ if ( !class_exists('BlogImporter') )  {
                     //  load the image from $imgpath
                     $imgid = $this->handle_import_media_file($imgpath, $id);
                     if ( is_wp_error( $imgid ) ) {
-                        echo '<span class="attachment_error">'.$imgid->get_error_message().'</span>';
+                        $this->my_error();
                     }
                     else {
                         $imgpath = wp_get_attachment_url($imgid);
@@ -140,7 +129,6 @@ if ( !class_exists('BlogImporter') )  {
                                 $custom = str_replace($src, $imgpath, $custom);
                                 $update = true;
                         }
-
                     } // is_wp_error else
                 } // foreach
 
@@ -150,13 +138,9 @@ if ( !class_exists('BlogImporter') )  {
                         $my_post['ID'] = $id;
                         $my_post['post_content'] = $content;
                         wp_update_post($my_post);
-                        update_post_meta($id, '_ise_old_sidebar', $custom); 
                 }
-
-                _e('done.');
-                echo '</p>';
                 flush();
-            } // if empty
+            } // if empty            
         }
         //Handle an individual file import. 
         function handle_import_media_file($file, $post_id = 0) {
@@ -176,7 +160,7 @@ if ( !class_exists('BlogImporter') )  {
                 // copy the file to the uploads dir
                 $new_file = $uploads['path'] . '/' . $filename;
                 if ( false === @copy( $file, $new_file ) ){
-                        return new WP_Error('upload_error', sprintf(__('Could not find the right path to %s (tried %s). It could not be imported. Please upload it manually.', 'html-import-pages'), basename($file), $file));
+                    $this->my_error();
                 }
                 // Set correct file permissions
                 $stat = stat( dirname( $new_file ));
@@ -189,20 +173,9 @@ if ( !class_exists('BlogImporter') )  {
                 $return = apply_filters( 'wp_handle_upload', array( 'file' => $new_file, 'url' => $url, 'type' => wp_check_filetype( $file, null ) ) );
                 $new_file = $return['file'];
                 $url = $return['url'];
-                $type = $return['type'];
 
                 $title = preg_replace('!\.[^.]+$!', '', basename($file));
                 $content = '';
-
-                // use image exif/iptc data for title and caption defaults if possible
-                if ( $image_meta = @wp_read_image_metadata($new_file) ) {
-                        if ( '' != trim($image_meta['title']) ) {
-                                $title = trim($image_meta['title']);
-                        }
-                        if ( '' != trim($image_meta['caption']) ) {
-                                $content = trim($image_meta['caption']);
-                        }
-                }
 
                 if ( $time ) {
                         $post_date_gmt = $time;
@@ -239,6 +212,8 @@ if ( !class_exists('BlogImporter') )  {
             return $id;
         }
         function remove_dot_segments( $path ) {
+            //This function is mainly used to create absolute URL of image and store in DB.
+            //It excludes any parameters if added to absolute url and provides baseurl
             $inSegs  = preg_split( '!/!u', $path );
             $outSegs = array( );
             foreach ( $inSegs as $seg )
@@ -266,9 +241,23 @@ if ( !class_exists('BlogImporter') )  {
             $outPath = str_replace(':///', '://', $outPath);
             return rawurldecode($outPath);
         }
-
-        function handle_accents() {            
-            $content = $this->tempfile;        
+        
+        function cleanHTML($string){
+            $replaceElements = array('\n','&#13;','//','?','&nbsp');
+            $string = str_replace($replaceElements, '', $string);    
+            $string = preg_replace('#<script(.*?)>(.*?)</script>#is', '', $string);            
+            // reduce line breaks and remove empty tags             
+            $string = preg_replace( "/<[^\/>]*>([\s]?)*<\/[^>]*>/", ' ', $string );            
+            // get rid of remaining newlines; basic HTML cleanup           
+            $string = ereg_replace("[\n\r]", " ", $string); 
+            $string = preg_replace_callback('|<(/?[A-Z]+)|', create_function('$match', 'return "<" . strtolower($match[1]);'), $string);
+            $string = str_replace('<br>', '<br />', $string);
+            
+            return $string;
+        }
+        function handle_accents() {
+            // from: http://www.php.net/manual/en/domdocument.loadhtml.php#91513
+            $content = $this->tempfile;                
             if (!empty($content) && function_exists('mb_convert_encoding')) {
                 mb_detect_order("ASCII,UTF-8,ISO-8859-1,windows-1252,iso-8859-15");
                 if (empty($encod)) {
@@ -285,20 +274,7 @@ if ( !class_exists('BlogImporter') )  {
                 $content = mb_convert_encoding($content, 'HTML-ENTITIES', $encod);
             }
             return $content;
-        }
-        function cleanHTML($string){
-            $string = preg_replace('#<script(.*?)>(.*?)</script>#is', '', $string);
-            // reduce line breaks and remove empty tags
-            $string = str_replace( '\n', ' ', $string ); 
-            $string = preg_replace( "/<[^\/>]*>([\s]?)*<\/[^>]*>/", ' ', $string );
-            // get rid of remaining newlines; basic HTML cleanup
-            $string = str_replace('&#13;', ' ', $string); 
-            $string = ereg_replace("[\n\r]", " ", $string); 
-            $string = preg_replace_callback('|<(/?[A-Z]+)|', create_function('$match', 'return "<" . strtolower($match[1]);'), $string);
-            $string = str_replace('<br>', '<br />', $string);
-            $string = str_replace('<hr>', '<hr />', $string);
-            return $string;
-        }
+	}
         function get_post() {
             // this gets the content AND imports the post because we have to build $this->filearr as we go so we can find the new post IDs of files' parent directories
             set_time_limit(540);                      
@@ -306,26 +282,25 @@ if ( !class_exists('BlogImporter') )  {
             $doc = new DOMDocument();
             $doc->strictErrorChecking = false; // ignore invalid HTML, we hope
             $doc->preserveWhiteSpace = false;  
-            $doc->formatOutput = false;  // speed this up
-            $content = $this->handle_accents(); 
-            $content = $this -> cleanHTML($content);
-            @$doc->loadHTML($content);        
-            $xml = @simplexml_import_dom($doc);
+            $doc->formatOutput = false;  // speed this up   
+            $content = $this->handle_accents();            
+            @$doc->loadHTML($content);          
+            $xml = @simplexml_import_dom($doc);                      
             // avoid asXML errors when it encounters character range issues
             libxml_clear_errors();
-            libxml_use_internal_errors(false);
-            echo '<h2>'.__( 'Importing Data from WebPage...').'</h2>';
+            libxml_use_internal_errors(false);            
             // start building the WP post object to insert
-            $my_post = array();			
+            $my_post = array();	
+            $post_id = '';
             //getting title
             $titletag = "title";				
             $titlequery = '//'.$titletag;				
-            $title = $xml->xpath($titlequery);
-            if (isset($title[0])) {
+            $title = $xml->xpath($titlequery);             
+            
+            if (isset($title)) {
                 $title = $title[0]->asXML(); // asXML() preserves HTML in content
             }
-            else { // fallback
-                //$title = $xml->xpath('//title');
+            else { // fallback                
                 $title = $xml->xpath($titlequery);
                 if (isset($title[0])) {
                     $title = $title[0];
@@ -334,69 +309,71 @@ if ( !class_exists('BlogImporter') )  {
                     $title = '';
                 }
                 else {
-                    $title = (string)$title;
+                    $title = (string)$title;                    
                 }    
             }
-
-            $title = str_replace('<br>',' ',$title);
+            $title = str_replace('<br>',' ',$title);           
+            //If div ids are given then we need to retreive only those div data            
+            if(is_array($this->getContent) && !empty($this->getContent)) {
+                $totalDivContent = '';
+                for($divcount =0; $divcount<count($this->getContent);$divcount++) {                    
+                    $xquery = '//div[@id="'.$this->getContent[$divcount].'"]';                   
+                    $divcontent = $xml->xpath($xquery);
+                    if (is_array($divcontent) && isset($divcontent[0]) && is_object($divcontent[0])) {
+			$totalDivContent .= $divcontent[0]->asXML();
+                    }else{
+                        //need to place error here
+                        $this->appError = $this->my_error('e_divcontent');
+                        return;
+                    }                    
+                }
+                if(empty($totalDivContent)){
+                    $this->appError = $this->my_error('e_divcontent');
+                    return;
+                }else {
+                    $my_post['post_content'] = $this->cross_post_info.$this->cleanHTML($totalDivContent);
+                }
+            } else {
+                $my_post['post_content'] = $this->cross_post_info.$this->cleanHTML($content);
+            } 
+            
             $my_post['post_title'] = trim(strip_tags($title));
-            $my_post['post_name'] = trim(strip_tags($title));		
+            $my_post['post_name'] = trim(strip_tags($title));
+            
             // post type
             $my_post['post_type'] = "post";
             //$my_post['post_parent'] lets make this as 0
             $my_post['post_date'] = date("Y-m-d H:i:s", time());
             $my_post['post_date_gmt'] = date("Y-m-d H:i:s", time());
-            $my_post['post_content'] = $content;
-
             // status
             $my_post['post_status'] = "publish";
             // author
             $currentuser = wp_get_current_user();
             $post_author = $currentuser->ID;
             $my_post['post_author'] = $post_author;
-            $post_id = wp_insert_post($my_post);
-
+            if(empty($this->appError)) {
+                $post_id = wp_insert_post($my_post);
+            }
+           // add_post_meta($post_id, 'siteURL', $this->cross_post_url, true);
             // handle errors
             if ( is_wp_error( $post_id ) ) {
-                $this->table[] = "<tr><th class='error'>--</th><td colspan='3' class='error'> " . $post_id /* error msg */ . "</td></tr>";
+                $this->appError = $this->my_error('e_importBlogError'); 
             }
             if (!$post_id) {
-                $this->table[] = "<tr><th class='error'>--</th><td colspan='3' class='error'> " . sprintf(__("Could not import the data %s. Something went wrong", 'blog-import')) . "</td></tr>";
-            } else {
-                echo '<h2>'.__( 'Done with content importing').'</h2>';
-            }
-            //add_post_meta($post_id, '_wp_page_template', 0, true);
-            $this->filearr[$post_id] = $this->tempfile;       
-
-        }
-
-        function dispatch() 
-        {	
-            if (empty ($_GET['step'])){
-                $step = 0;
-            }
-            else {
-                $step = (int) $_GET['step'];
-            }
-
-            $this->header();			
-            switch ($step) {
-                case 0:
-                $this->greet();
-                break;
-
-                case 1:
-                $this->get_blog_content();
-                break;
-
-            }
-            $this->footer();
-        }
-
-        function BlogImporter()  {	//nothing	
-        }
+                $this->appError = $this->my_error('e_importBlogError');                
+            }  else {
+                $this->filearr[$post_id] = $this->tempfile;
+                return $post_id;
+            }            
+            
+        }       
     }
 }
-$blog_import = new BlogImporter();	
-register_importer('import_blog', __('Import Page From Blog'), 'Import Page from any blog as post into word press', array ($blog_import, 'dispatch'));
+if ( class_exists('BlogImporter') ) {	
+    $blog_import = new BlogImporter();
+    if (isset($blog_import)) {
+        register_activation_hook( __FILE__, array(&$blog_import, 'install') );
+    }
+}	
+
 ?>
