@@ -1,12 +1,20 @@
 <?php
 /*
 Plugin Name: Import Blog Page
-Plugin URI: http://wordpress.org/extend/plugins/
+Plugin URI: http://localhost/wordpress/import-blog
 Description: Import pages from your blog.
-Version: 1.1
 Author: Manohari Vagicherla
+Version: 1.1
+License: GPLv2 or later
  */
 
+/* Short description about this class
+ * This class scrap the html web page and get the content and copy to your blog.
+ * 
+ * @plugin_domain
+ * @getContent
+ * @appEroor are class variables used in the class    
+ *  */
 if ( !class_exists('BlogImporter') ) {
     class BlogImporter {
         var $plugin_domain='BlogImporter';
@@ -20,7 +28,7 @@ if ( !class_exists('BlogImporter') ) {
             add_action('admin_menu',  array(&$this, 'admin_menu'));
         }
         function admin_menu() {          	
-            // submenu pages           
+            // Adding cross post as custom post type in posts         
             add_submenu_page('post-new.php', __('Add CrossPost', $this->plugin_domain) ,  __('CrossPost', $this->plugin_domain)	, 1 	, 'add-crosspost',  array(&$this, 'display_form') ); 	  	 
         } 
         // Init error messages	
@@ -32,7 +40,9 @@ if ( !class_exists('BlogImporter') ) {
             $this->error->add('e_importBlogError', __('Could not import the data.Something went wrong.',$this->plugin_domain));			
             $this->error->add('e_divcontent', __('No content exist in div.', $this->plugin_domain));
 	}
-        // Retrieve an error message
+        /* Retrieve an error message
+         * @e is optional 
+         **/
 	function my_error($e = '') {		
 		$msg = $this->error->get_error_message($e);		
 		if ($msg == null) {
@@ -40,14 +50,18 @@ if ( !class_exists('BlogImporter') ) {
 		}
 		return $msg;
 	}
+        /*This function displays the UI of crosspost with include file
+         * Validations are also done in this function for all ui fields
+         */
         function display_form() {            			
             $page=trim($_GET['page']);
             $published=isset($_POST['publish']);            	
             $get_div_content= trim($_POST['contentdivid']);
-            if($page == 'add-crosspost') {
+            if($page === 'add-crosspost') {
                 $url= trim($_POST['url']);										
                 if ($published)
                 {
+                    //validations of UI fields
                     if (!empty($url) && isset($url)) {                                        
                         $this->cross_post_info = "<h3>Cross post from </h3> <a href='".$url."'>$url</a>";                        
                         if((stristr($url,'http://') || stristr($url,'https://') ) === false)
@@ -58,11 +72,11 @@ if ( !class_exists('BlogImporter') ) {
                             if( (@file_get_contents($url)) === false ) {
                                 $this->appError = $this->my_error('e_importError');
                             }else{
-                                $this->tempfile = file_get_contents($url);
+                                $this->tempfile =  balanceTags(file_get_contents($url), true);
                                 if(!empty($get_div_content)) {
                                     $this->getContent = explode(",",$get_div_content);                                    
                                 }                                   
-                               $post_id = $this->insert_pageContent();                                
+                               $post_id = $this->insert_post();                                
                             }   
                         }                            							
                     }
@@ -73,23 +87,22 @@ if ( !class_exists('BlogImporter') ) {
                 include( 'crosspost.php');
             }
         }
-        
-        function insert_pageContent()
+        /*
+         * This function import the content and images of the page to cross post
+         */
+        function insert_post()
         {
             set_magic_quotes_runtime(0);
-            $postid = $this->get_post();           
+            $postid = $this->get_postID();           
             if(!empty($postid)) {
-                $this->find_images();
+                $this->import_images($postid);
                 return $postid;
             }
-        }
-        function find_images() {
-            if(is_array($this->filearr)) {
-                $postid = key($this->filearr);
-                $this->import_images($postid);
-            }             
-        }
-        // largely borrowed from the Add Linked Images to Gallery plugin, except we do a simple str_replace at the end
+        }        
+        /*
+         *  This function Add Linked Images to Media.
+         * @id is new post id
+         */
         function import_images($id) {
             $post_data = get_post($id); //post array retreived based on postid
             $srcs = array();
@@ -196,9 +209,7 @@ if ( !class_exists('BlogImporter') ) {
                         'post_content' => $content,
                         'post_date' => $post_date,
                         'post_date_gmt' => $post_date_gmt
-                );
-
-                //Win32 fix:
+                );                
                 $new_file = str_replace( strtolower(str_replace('\\', '/', $uploads['basedir'])), $uploads['basedir'], $new_file);
                 // Insert attachment
                 $id = wp_insert_attachment($attachment, $new_file, $post_id);
@@ -207,13 +218,16 @@ if ( !class_exists('BlogImporter') ) {
                         wp_update_attachment_metadata( $id, $data );
                         $this->filearr[$id] = $file; // $file contains the original, absolute path to the file
                 }
-
             } // if attachment already exists
             return $id;
         }
+        
+        /*
+         * This function is mainly used to create absolute URL of image and store in DB.
+         * It excludes any parameters if added to absolute url and provides baseurl
+         */       
         function remove_dot_segments( $path ) {
-            //This function is mainly used to create absolute URL of image and store in DB.
-            //It excludes any parameters if added to absolute url and provides baseurl
+            
             $inSegs  = preg_split( '!/!u', $path );
             $outSegs = array( );
             foreach ( $inSegs as $seg )
@@ -241,7 +255,7 @@ if ( !class_exists('BlogImporter') ) {
             $outPath = str_replace(':///', '://', $outPath);
             return rawurldecode($outPath);
         }
-        
+        //Cleans HTML file 
         function cleanHTML($string){
             $replaceElements = array('\n','&#13;','//','?','&nbsp');
             $string = str_replace($replaceElements, '', $string);    
@@ -251,19 +265,17 @@ if ( !class_exists('BlogImporter') ) {
             // get rid of remaining newlines; basic HTML cleanup           
             $string = ereg_replace("[\n\r]", " ", $string); 
             $string = preg_replace_callback('|<(/?[A-Z]+)|', create_function('$match', 'return "<" . strtolower($match[1]);'), $string);
-            $string = str_replace('<br>', '<br />', $string);
-            
+            $string = str_replace('<br>', '<br />', $string);            
             return $string;
         }
+        //This function mainly checks encoding type of file and make changes accordingly
         function handle_accents() {
             // from: http://www.php.net/manual/en/domdocument.loadhtml.php#91513
             $content = $this->tempfile;                
             if (!empty($content) && function_exists('mb_convert_encoding')) {
-                mb_detect_order("ASCII,UTF-8,ISO-8859-1,windows-1252,iso-8859-15");
-                if (empty($encod)) {
-                    $encod = mb_detect_encoding($content);
-                    $headpos = mb_strpos($content,'<head>');
-                }
+                mb_detect_order("ASCII,UTF-8,ISO-8859-1,windows-1252,iso-8859-15");                
+                $encod = mb_detect_encoding($content);
+                $headpos = mb_strpos($content,'<head>');                
                 if (FALSE === $headpos) {
                     $headpos= mb_strpos($content,'<HEAD>');
                 }
@@ -274,9 +286,13 @@ if ( !class_exists('BlogImporter') ) {
                 $content = mb_convert_encoding($content, 'HTML-ENTITIES', $encod);
             }
             return $content;
-	}
-        function get_post() {
-            // this gets the content AND imports the post because we have to build $this->filearr as we go so we can find the new post IDs of files' parent directories
+	} 
+        /*
+         * Function mainly insert content into wp_post Database and returns postid accordingly
+         * Which is then handled by images import to media 
+         */
+        function get_postID() {
+            // this gets the content AND imports the post because we have to build $this->filearr as we go so we can find the new post IDs of files'
             set_time_limit(540);                      
             set_magic_quotes_runtime(0);
             $doc = new DOMDocument();
@@ -354,7 +370,7 @@ if ( !class_exists('BlogImporter') ) {
             if(empty($this->appError)) {
                 $post_id = wp_insert_post($my_post);
             }
-           // add_post_meta($post_id, 'siteURL', $this->cross_post_url, true);
+           
             // handle errors
             if ( is_wp_error( $post_id ) ) {
                 $this->appError = $this->my_error('e_importBlogError'); 
@@ -375,5 +391,4 @@ if ( class_exists('BlogImporter') ) {
         register_activation_hook( __FILE__, array(&$blog_import, 'install') );
     }
 }	
-
 ?>

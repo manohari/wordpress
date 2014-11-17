@@ -10,7 +10,7 @@
 		</div> 
         <?php endif; ?>
 	
-	<h2><?php _e('Import Page From Blog',$this->plugin_domain); ?></h2>
+	<h2><?php _e('Cross Post From Blog',$this->plugin_domain); ?></h2>
 	<form action="" method="post">
 	<?php wp_nonce_field($_GET['page']); ?>
 			
@@ -26,14 +26,14 @@
                             <h3><?php _e('URL',$this->plugin_domain); ?></h3>
                             <div class="inside">																				
                                 <p>					  	
-                                    <input style="width: 415px" type="text" tabindex="2" name="url" id="url" value="<?php echo $url ?>" />					
+                                    <input style="width: 415px" type="text" tabindex="2" name="url" id="url" value="<?php echo esc_url($url); ?>" />					
                                 </p>
                             </div>
                         </div>
                         <div class="postbox ">
                                 <h3><?php _e('Div Id from which you need to extract content',$this->plugin_domain); ?></h3>					
                                 <div class="inside">
-                                    <input style="width: 415px" type="text" tabindex="2" name="contentdivid" id="contentdivid" value="<?php echo $contentDivId ?>" />					                                    
+                                    <input style="width: 415px" type="text" tabindex="2" name="contentdivid" id="contentdivid" value="<?php echo esc_attr($contentDivId); ?>" />					                                    
                                     <p>Please enter div ids to pull data.If empty total page content is pulled</p>
                                 </div>
                         </div>
