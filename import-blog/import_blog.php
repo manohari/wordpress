@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Import Blog Page
-Plugin URI: http://localhost/wordpress/import-blog
+Plugin URI: http://wordpress/import-blog
 Description: Import pages from your blog.
 Author: Manohari Vagicherla
 Version: 1.1
@@ -56,9 +56,12 @@ if ( !class_exists('BlogImporter') ) {
         function display_form() {            			
             $page=trim($_GET['page']);
             $published=isset($_POST['publish']);            	
-            $get_div_content= trim($_POST['contentdivid']);
+            $get_selectors= trim($_POST['contentdivid']);
             if($page === 'add-crosspost') {
-                $url= trim($_POST['url']);										
+                $url= trim($_POST['url']);
+                if(!empty($get_selectors)) {
+                    $this->getContent = explode(",",$get_selectors);                                    
+                }
                 if ($published)
                 {
                     //validations of UI fields
@@ -72,11 +75,9 @@ if ( !class_exists('BlogImporter') ) {
                             if( (@file_get_contents($url)) === false ) {
                                 $this->appError = $this->my_error('e_importError');
                             }else{
-                                $this->tempfile =  balanceTags(file_get_contents($url), true);
-                                if(!empty($get_div_content)) {
-                                    $this->getContent = explode(",",$get_div_content);                                    
-                                }                                   
-                               $post_id = $this->insert_post();                                
+                                $this->tempfile =  balanceTags(file_get_contents($url), true);                                
+                                //insert the content either complete file or based on selectors
+                                $post_id = $this->insert_post();                                
                             }   
                         }                            							
                     }
@@ -110,16 +111,13 @@ if ( !class_exists('BlogImporter') ) {
             $title = $post_data->post_title;
             if (empty($title)) { 
                 $title = __('(no title)'); 
-                
             }
             $update = false;
-
             // find all src attributes
             preg_match_all('/<img[^>]* src=[\'"]?([^>\'" ]+)/', $post_data->post_content, $matches);
             for ($i=0; $i<count($matches[0]); $i++) {
                     $srcs[] = $matches[1][$i];
             }
-            
             if (!empty($srcs)) {                         
                 foreach ($srcs as $src) {
                     // src="http://foo.com/images/foo"
@@ -139,12 +137,10 @@ if ( !class_exists('BlogImporter') ) {
                         //  replace paths in the content
                         if (!is_wp_error($imgpath)) {			
                                 $content = str_replace($src, $imgpath, $content);
-                                $custom = str_replace($src, $imgpath, $custom);
                                 $update = true;
                         }
                     } // is_wp_error else
                 } // foreach
-
                 // update the post only once
                 if ($update == true) {
                         $my_post = array();
@@ -257,7 +253,7 @@ if ( !class_exists('BlogImporter') ) {
         }
         //Cleans HTML file 
         function cleanHTML($string){
-            $replaceElements = array('\n','&#13;','//','?','&nbsp');
+            $replaceElements = array('\n','&#13;','&nbsp');
             $string = str_replace($replaceElements, '', $string);    
             $string = preg_replace('#<script(.*?)>(.*?)</script>#is', '', $string);            
             // reduce line breaks and remove empty tags             
@@ -268,25 +264,6 @@ if ( !class_exists('BlogImporter') ) {
             $string = str_replace('<br>', '<br />', $string);            
             return $string;
         }
-        //This function mainly checks encoding type of file and make changes accordingly
-        function handle_accents() {
-            // from: http://www.php.net/manual/en/domdocument.loadhtml.php#91513
-            $content = $this->tempfile;                
-            if (!empty($content) && function_exists('mb_convert_encoding')) {
-                mb_detect_order("ASCII,UTF-8,ISO-8859-1,windows-1252,iso-8859-15");                
-                $encod = mb_detect_encoding($content);
-                $headpos = mb_strpos($content,'<head>');                
-                if (FALSE === $headpos) {
-                    $headpos= mb_strpos($content,'<HEAD>');
-                }
-                if (FALSE !== $headpos) {
-                    $headpos+=6;
-                    $content = mb_substr($content,0,$headpos) . '<meta http-equiv="Content-Type" content="text/html; charset='.$encod.'">' .mb_substr($content,$headpos);
-                }
-                $content = mb_convert_encoding($content, 'HTML-ENTITIES', $encod);
-            }
-            return $content;
-	} 
         /*
          * Function mainly insert content into wp_post Database and returns postid accordingly
          * Which is then handled by images import to media 
@@ -299,7 +276,7 @@ if ( !class_exists('BlogImporter') ) {
             $doc->strictErrorChecking = false; // ignore invalid HTML, we hope
             $doc->preserveWhiteSpace = false;  
             $doc->formatOutput = false;  // speed this up   
-            $content = $this->handle_accents();            
+            $content = $this->tempfile;            
             @$doc->loadHTML($content);          
             $xml = @simplexml_import_dom($doc);                      
             // avoid asXML errors when it encounters character range issues
@@ -311,32 +288,30 @@ if ( !class_exists('BlogImporter') ) {
             //getting title
             $titletag = "title";				
             $titlequery = '//'.$titletag;				
-            $title = $xml->xpath($titlequery);             
-            
-            if (isset($title)) {
+            $title = $xml->xpath($titlequery); 
+            if (isset($title) && !empty($title)) {
                 $title = $title[0]->asXML(); // asXML() preserves HTML in content
             }
             else { // fallback                
-                $title = $xml->xpath($titlequery);
-                if (isset($title[0])) {
+                if (isset($title[0]) && !empty($title[0])) {
                     $title = $title[0];
                 }
-                if (empty($title)) {
+                elseif (!empty ($title)) {
+                    $title = (string)$title;                    
+                }
+                else{
                     $title = '';
                 }
-                else {
-                    $title = (string)$title;                    
-                }    
-            }
-            $title = str_replace('<br>',' ',$title);           
+            }        
             //If div ids are given then we need to retreive only those div data            
             if(is_array($this->getContent) && !empty($this->getContent)) {
                 $totalDivContent = '';
-                for($divcount =0; $divcount<count($this->getContent);$divcount++) {                    
+                $count = count($this->getContent);                
+                for($divcount =0; $divcount<$count;$divcount++) {                    
                     $xquery = '//div[@id="'.$this->getContent[$divcount].'"]';                   
-                    $divcontent = $xml->xpath($xquery);
-                    if (is_array($divcontent) && isset($divcontent[0]) && is_object($divcontent[0])) {
-			$totalDivContent .= $divcontent[0]->asXML();
+                    $blockContent = $xml->xpath($xquery);
+                    if (is_array($blockContent) && isset($blockContent[0]) && is_object($blockContent[0]) && !empty($blockContent[0])) {
+			$totalDivContent .= $blockContent[0]->asXML();
                     }else{
                         //need to place error here
                         $this->appError = $this->my_error('e_divcontent');
@@ -351,11 +326,9 @@ if ( !class_exists('BlogImporter') ) {
                 }
             } else {
                 $my_post['post_content'] = $this->cross_post_info.$this->cleanHTML($content);
-            } 
-            
+            }
             $my_post['post_title'] = trim(strip_tags($title));
-            $my_post['post_name'] = trim(strip_tags($title));
-            
+            $my_post['post_name'] = trim(strip_tags($title));            
             // post type
             $my_post['post_type'] = "post";
             //$my_post['post_parent'] lets make this as 0
@@ -366,18 +339,18 @@ if ( !class_exists('BlogImporter') ) {
             // author
             $currentuser = wp_get_current_user();
             $post_author = $currentuser->ID;
-            $my_post['post_author'] = $post_author;
+            $my_post['post_author'] = $post_author;              
             if(empty($this->appError)) {
                 $post_id = wp_insert_post($my_post);
             }
-           
             // handle errors
             if ( is_wp_error( $post_id ) ) {
                 $this->appError = $this->my_error('e_importBlogError'); 
             }
             if (!$post_id) {
                 $this->appError = $this->my_error('e_importBlogError');                
-            }  else {
+            }
+            else {                
                 $this->filearr[$post_id] = $this->tempfile;
                 return $post_id;
             }            
