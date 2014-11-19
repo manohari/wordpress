@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Import Blog Page
-Plugin URI: http://wordpress/import-blog
+Plugin URI: http://wordpres/import-blog
 Description: Import pages from your blog.
 Author: Manohari Vagicherla
 Version: 1.1
@@ -20,7 +20,10 @@ if ( !class_exists('BlogImporter') ) {
         var $plugin_domain='BlogImporter';
         var $getContent = array();
         var $appError = '';
-        function BlogImporter()  {	
+        var $tempfile;
+        var $cross_post_info;
+        var $filearr;
+        function BlogImporter()  {
             $this->plugin_url = defined('WP_PLUGIN_URL') ? WP_PLUGIN_URL . '/' . dirname(plugin_basename(__FILE__)) : trailingslashit(get_bloginfo('wpurl')) . PLUGINDIR . '/' . dirname(plugin_basename(__FILE__)); 
             $this->error = new WP_Error();
             $this->init_errors();
@@ -30,6 +33,7 @@ if ( !class_exists('BlogImporter') ) {
         function admin_menu() {          	
             // Adding cross post as custom post type in posts         
             add_submenu_page('post-new.php', __('Add CrossPost', $this->plugin_domain) ,  __('CrossPost', $this->plugin_domain)	, 1 	, 'add-crosspost',  array(&$this, 'display_form') ); 	  	 
+            
         } 
         // Init error messages	
 	function init_errors()
@@ -39,6 +43,7 @@ if ( !class_exists('BlogImporter') ) {
             $this->error->add('e_importError', __('No content to import.Please check the page',$this->plugin_domain));
             $this->error->add('e_importBlogError', __('Could not import the data.Something went wrong.',$this->plugin_domain));			
             $this->error->add('e_divcontent', __('No content exist in div.', $this->plugin_domain));
+            $this->error->add('e_dataBaseError',__('Something went wrong with Database insertion.Check the post array values',  $this->plugin_domain));
 	}
         /* Retrieve an error message
          * @e is optional 
@@ -62,42 +67,62 @@ if ( !class_exists('BlogImporter') ) {
                 if(!empty($get_selectors)) {
                     $this->getContent = explode(",",$get_selectors);                                    
                 }
+                if(empty($url)) {
+                    $this->appError = $this->my_error('e_url');
+                }
                 if ($published)
                 {
-                    //validations of UI fields
-                    if (!empty($url) && isset($url)) {                                        
-                        $this->cross_post_info = "<h3>Cross post from </h3> <a href='".$url."'>$url</a>";                        
-                        if((stristr($url,'http://') || stristr($url,'https://') ) === false)
-                        {                             
-                            $this->appError = $this->my_error('e_protocol');                            
-                        } 
-                        else{
-                            if( (@file_get_contents($url)) === false ) {
-                                $this->appError = $this->my_error('e_importError');
-                            }else{
-                                $this->tempfile =  balanceTags(file_get_contents($url), true);                                
-                                //insert the content either complete file or based on selectors
-                                $post_id = $this->insert_post();                                
-                            }   
-                        }                            							
-                    }
-                    else {						
-                        $this->appError = $this->my_error('e_url');
-                    }
-                }
-                include( 'crosspost.php');
+                    //validations of UI field
+                    $validateFlag = $this->validate_url($url);                        
+                    if($validateFlag) {                        
+                        $getContent = $this->get_content_from_url($url);
+                        if($getContent) {                                                            
+                            //insert the content either complete file or based on selectors
+                            $post_id = $this->insert_post($url);
+                        }                        
+                    }                    
+                } 
+                include('crosspost.php');
             }
+        }
+        function get_content_from_url($url) {
+            if( (@file_get_contents($url)) === false ) { 
+                $this->appError = $this->my_error('e_importError');
+                return false;
+            }else{                
+                return true;                               
+            } 
+        }
+        function validate_url($url) {            
+            if (!empty($url) && isset($url)) {
+                if( (stristr($url,'http://') || stristr($url,'https://') ) === false)
+                {                            
+                    $this->appError = $this->my_error('e_protocol'); 
+                    return false;
+                } 
+                else{
+                    if((stristr($url, 'http') && stristr($url, 'https'))) {                                
+                        $this->appError = $this->my_error('e_protocol');
+                        return false;
+                    }                     
+                }
+                return true;
+            }            
         }
         /*
          * This function import the content and images of the page to cross post
          */
-        function insert_post()
+        function insert_post($url)
         {
-            set_magic_quotes_runtime(0);
-            $postid = $this->get_postID();           
-            if(!empty($postid)) {
+            //set_magic_quotes_runtime(0);
+            $this->tempfile =  balanceTags(file_get_contents($url), true);
+            $postid = $this->get_postID($url);           
+            if($postid) {
                 $this->import_images($postid);
                 return $postid;
+            }else {
+                $this->appError = $this->my_error('e_dataBaseError');
+                return false;
             }
         }        
         /*
@@ -253,31 +278,58 @@ if ( !class_exists('BlogImporter') ) {
         }
         //Cleans HTML file 
         function cleanHTML($string){
-            $replaceElements = array('\n','&#13;','&nbsp');
-            $string = str_replace($replaceElements, '', $string);    
-            $string = preg_replace('#<script(.*?)>(.*?)</script>#is', '', $string);            
+            $searchEle = array('\n','&#13;');
+            $string = str_replace($searchEle, '', $string); 
+            $string = str_replace('< !DOCTYPE', '<DOCTYPE', $string);            
+            $string = preg_replace('#<script(.*?)>(.*?)</script>#is', '', $string);           
+            $string = preg_replace('#<link (.*?)>#is', '', $string);
             // reduce line breaks and remove empty tags             
-            $string = preg_replace( "/<[^\/>]*>([\s]?)*<\/[^>]*>/", ' ', $string );            
+            $string = preg_replace( "/<[^\/>]*>([\s]?)*<\/[^>]*>/", ' ', $string );              
             // get rid of remaining newlines; basic HTML cleanup           
-            $string = ereg_replace("[\n\r]", " ", $string); 
+            //$string = ereg_replace("[\n\r]", " ", $string); 
             $string = preg_replace_callback('|<(/?[A-Z]+)|', create_function('$match', 'return "<" . strtolower($match[1]);'), $string);
             $string = str_replace('<br>', '<br />', $string);            
             return $string;
         }
         /*
+         * This function will set the html file inporper format.
+         * loadHTML() in DomDocument append meta tags and char encoding if it is plain html load
+         * In order to not append meta tags to html page we take the precaution and 
+         * make sure encoding chars are displayed correctly and BOM markers are not present
+         */
+        function handle_accents() {
+            // from: http://www.php.net/manual/en/domdocument.loadhtml.php#91513
+            $content = $this->tempfile;
+            if (!empty($content) && function_exists('mb_convert_encoding')) {
+                    mb_detect_order("ASCII,UTF-8,ISO-8859-1,windows-1252,iso-8859-15");
+                
+                $encod = mb_detect_encoding($content);
+                $headpos = mb_strpos($content,'<head>');
+                if (FALSE === $headpos)
+                    $headpos= mb_strpos($content,'<HEAD>');
+                if (FALSE !== $headpos) {
+                    $headpos+=6;
+                    $content = mb_substr($content,0,$headpos) . '<meta http-equiv="Content-Type" content="text/html; charset='.$encod.'">' .mb_substr($content,$headpos);
+                }
+                $content = mb_convert_encoding($content, 'HTML-ENTITIES', $encod);
+            }
+            return $content;
+	}
+        /*
          * Function mainly insert content into wp_post Database and returns postid accordingly
          * Which is then handled by images import to media 
          */
-        function get_postID() {
+        function get_postID($url) {
             // this gets the content AND imports the post because we have to build $this->filearr as we go so we can find the new post IDs of files'
-            set_time_limit(540);                      
-            set_magic_quotes_runtime(0);
+            //set_time_limit(540);                      
+            //set_magic_quotes_runtime(0);
+            $cross_post_info = "<h3>Cross post from </h3> <a href='".$url."'>$url</a>";
             $doc = new DOMDocument();
             $doc->strictErrorChecking = false; // ignore invalid HTML, we hope
             $doc->preserveWhiteSpace = false;  
             $doc->formatOutput = false;  // speed this up   
-            $content = $this->tempfile;            
-            @$doc->loadHTML($content);          
+            $content = $this->handle_accents();  
+            @$doc->loadHTML($content);             
             $xml = @simplexml_import_dom($doc);                      
             // avoid asXML errors when it encounters character range issues
             libxml_clear_errors();
@@ -322,11 +374,12 @@ if ( !class_exists('BlogImporter') ) {
                     $this->appError = $this->my_error('e_divcontent');
                     return;
                 }else {
-                    $my_post['post_content'] = $this->cross_post_info.$this->cleanHTML($totalDivContent);
+                     
+                    $my_post['post_content'] = $cross_post_info.$this->cleanHTML($totalDivContent);
                 }
             } else {
-                $my_post['post_content'] = $this->cross_post_info.$this->cleanHTML($content);
-            }
+                $my_post['post_content'] = $cross_post_info.$this->cleanHTML($content);
+            }            
             $my_post['post_title'] = trim(strip_tags($title));
             $my_post['post_name'] = trim(strip_tags($title));            
             // post type
@@ -344,24 +397,28 @@ if ( !class_exists('BlogImporter') ) {
                 $post_id = wp_insert_post($my_post);
             }
             // handle errors
-            if ( is_wp_error( $post_id ) ) {
-                $this->appError = $this->my_error('e_importBlogError'); 
+            if ( is_wp_error( $post_id ) ) {                 
+                return false;
             }
-            if (!$post_id) {
-                $this->appError = $this->my_error('e_importBlogError');                
+            if (!$post_id) {                
+                return false;
             }
             else {                
                 $this->filearr[$post_id] = $this->tempfile;
                 return $post_id;
             }            
             
-        }       
+        }
+        function install() {
+            //nothing to set options
+        }
     }
 }
 if ( class_exists('BlogImporter') ) {	
     $blog_import = new BlogImporter();
     if (isset($blog_import)) {
         register_activation_hook( __FILE__, array(&$blog_import, 'install') );
+        $GLOBALS['crosspost'] = $blog_import;
     }
 }	
 ?>
