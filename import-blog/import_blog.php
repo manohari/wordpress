@@ -20,7 +20,7 @@ if ( !class_exists('BlogImporter') ) {
         var $plugin_domain='BlogImporter';
         var $getContent = array();
         var $appError = '';
-        var $tempfile;
+        var $postContentArray = array();
         var $cross_post_info;
         var $filearr;
         function BlogImporter()  {
@@ -30,12 +30,20 @@ if ( !class_exists('BlogImporter') ) {
             // Add Options Page
             add_action('admin_menu',  array(&$this, 'admin_menu'));
         }
+        /**
+         * Add the submenu crosspost to post types
+         * @return custom post type
+         */
         function admin_menu() {          	
             // Adding cross post as custom post type in posts         
             add_submenu_page('post-new.php', __('Add CrossPost', $this->plugin_domain) ,  __('CrossPost', $this->plugin_domain)	, 1 	, 'add-crosspost',  array(&$this, 'display_form') ); 	  	 
             
         } 
-        // Init error messages	
+        /**
+         * Initialize the error messages to WP_error class
+         * 
+         * @return WP_Error Shows error message that suits error code
+         */
 	function init_errors()
 	{
             $this->error->add('e_url', __('Please enter URL.',$this->plugin_domain));			
@@ -45,9 +53,12 @@ if ( !class_exists('BlogImporter') ) {
             $this->error->add('e_divcontent', __('No content exist in div.', $this->plugin_domain));
             $this->error->add('e_dataBaseError',__('Something went wrong with Database insertion.Check the post array values',  $this->plugin_domain));
 	}
-        /* Retrieve an error message
-         * @e is optional 
-         **/
+        /**
+         * Retrieve an error message
+         * 
+         * @param $e the error code
+         * @return string the complete error message
+         */
 	function my_error($e = '') {		
 		$msg = $this->error->get_error_message($e);		
 		if ($msg == null) {
@@ -85,6 +96,13 @@ if ( !class_exists('BlogImporter') ) {
                 include('crosspost.php');
             }
         }
+        
+        /**
+         * Gets the content from the url
+         * 
+         * @param type $url eg:http://foo.com
+         * @return boolean returns true if contents fetched else false
+         */
         function get_content_from_url($url) {
             if( (@file_get_contents($url)) === false ) { 
                 $this->appError = $this->my_error('e_importError');
@@ -93,6 +111,11 @@ if ( !class_exists('BlogImporter') ) {
                 return true;                               
             } 
         }
+        /**
+         * Checks whether the url format is correct or not and contains only http or https
+         * @param type $url  eg:http://foo.com or https://foo.com
+         * @return boolean returns true if url is valid else false
+         */
         function validate_url($url) {            
             if (!empty($url) && isset($url)) {
                 if( (stristr($url,'http://') || stristr($url,'https://') ) === false)
@@ -109,25 +132,29 @@ if ( !class_exists('BlogImporter') ) {
                 return true;
             }            
         }
-        /*
-         * This function import the content and images of the page to cross post
+        /**
+         * Prepare the post content from given url and returns post id
+         * @param type $url valid http or https url format
+         * @return boolean true if data inserted to DB is success else false
          */
         function insert_post($url)
         {
-            //set_magic_quotes_runtime(0);
-            $this->tempfile =  balanceTags(file_get_contents($url), true);
-            $postid = $this->get_postID($url);           
-            if($postid) {
+            //set_magic_quotes_runtime(0);            
+           $this->preparePostContent($url); 
+           $postid = $this->get_postID();
+           if($postid) {
                 $this->import_images($postid);
                 return $postid;
             }else {
                 $this->appError = $this->my_error('e_dataBaseError');
                 return false;
             }
+            
         }        
-        /*
-         *  This function Add Linked Images to Media.
-         * @id is new post id
+        
+        /**
+         * This function add linked images of imported content to Media Library
+         * @param type $id  last inserted postid from WP_Posts 
          */
         function import_images($id) {
             $post_data = get_post($id); //post array retreived based on postid
@@ -176,7 +203,12 @@ if ( !class_exists('BlogImporter') ) {
                 flush();
             } // if empty            
         }
-        //Handle an individual file import. 
+        /**
+         * Upload the images into upload dir and change the img path from remote to local absolute path
+         * @param type $file img file path i.e.,img src
+         * @param type $post_id parent postid from WP_Posts
+         * @return integer WP_Posts id which is of post_type attachment
+         */
         function handle_import_media_file($file, $post_id = 0) {
             // see if the attachment already exists
             $id = array_search($file, $this->filearr);	
@@ -243,9 +275,10 @@ if ( !class_exists('BlogImporter') ) {
             return $id;
         }
         
-        /*
-         * This function is mainly used to create absolute URL of image and store in DB.
-         * It excludes any parameters if added to absolute url and provides baseurl
+        /**
+         * This function is mainly used to create absolute URL path for image
+         * @param img path 
+         * @return string absolute path of image
          */       
         function remove_dot_segments( $path ) {
             
@@ -276,7 +309,11 @@ if ( !class_exists('BlogImporter') ) {
             $outPath = str_replace(':///', '://', $outPath);
             return rawurldecode($outPath);
         }
-        //Cleans HTML file 
+        /**
+         * Cleans the HTML file
+         * @param $string html content string
+         * @return string 
+         */
         function cleanHTML($string){
             $searchEle = array('\n','&#13;');
             $string = str_replace($searchEle, '', $string); 
@@ -291,15 +328,21 @@ if ( !class_exists('BlogImporter') ) {
             $string = str_replace('<br>', '<br />', $string);            
             return $string;
         }
-        /*
+        /**
          * This function will set the html file inporper format.
          * loadHTML() in DomDocument append meta tags and char encoding if it is plain html load
          * In order to not append meta tags to html page we take the precaution and 
          * make sure encoding chars are displayed correctly and BOM markers are not present
+         * @param URL url
+         * @return HTMLcontent
          */
-        function handle_accents() {
-            // from: http://www.php.net/manual/en/domdocument.loadhtml.php#91513
-            $content = $this->tempfile;
+        function handle_accents($url) {
+            // from: http://www.php.net/manual/en/domdocument.loadhtml.php#91513         
+            if(is_null($url)) {
+                $this->appError = $this->my_error('e_importBlogError');
+                return false;
+            }
+            $content = file_get_contents($url);
             if (!empty($content) && function_exists('mb_convert_encoding')) {
                     mb_detect_order("ASCII,UTF-8,ISO-8859-1,windows-1252,iso-8859-15");
                 
@@ -315,44 +358,43 @@ if ( !class_exists('BlogImporter') ) {
             }
             return $content;
 	}
-        /*
-         * Function mainly insert content into wp_post Database and returns postid accordingly
-         * Which is then handled by images import to media 
+        /**
+         * Reads the content from html file and clean the filePrepares the WP_Posts post_content and post_title
+         * @param URL
+         * @return boolean true on successful Dom parsing else false
          */
-        function get_postID($url) {
-            // this gets the content AND imports the post because we have to build $this->filearr as we go so we can find the new post IDs of files'
-            //set_time_limit(540);                      
-            //set_magic_quotes_runtime(0);
+        function preparePostContent($url) {
+             if(is_null($url)) {                
+                return false;
+            }           
             $cross_post_info = "<h3>Cross post from </h3> <a href='".$url."'>$url</a>";
             $doc = new DOMDocument();
             $doc->strictErrorChecking = false; // ignore invalid HTML, we hope
             $doc->preserveWhiteSpace = false;  
             $doc->formatOutput = false;  // speed this up   
-            $content = $this->handle_accents();  
+            //$content = file_get_contents($url);           
+            $content = $this->handle_accents($url);           
             @$doc->loadHTML($content);             
             $xml = @simplexml_import_dom($doc);                      
             // avoid asXML errors when it encounters character range issues
             libxml_clear_errors();
-            libxml_use_internal_errors(false);            
-            // start building the WP post object to insert
-            $my_post = array();	
-            $post_id = '';
+            libxml_use_internal_errors(false);  
             //getting title
             $titletag = "title";				
             $titlequery = '//'.$titletag;				
             $title = $xml->xpath($titlequery); 
             if (isset($title) && !empty($title)) {
-                $title = $title[0]->asXML(); // asXML() preserves HTML in content
+                $this->postContentArray['post_title'] = $title[0]->asXML(); // asXML() preserves HTML in content
             }
             else { // fallback                
                 if (isset($title[0]) && !empty($title[0])) {
-                    $title = $title[0];
+                    $this->postContentArray['post_title'] = $title[0];
                 }
                 elseif (!empty ($title)) {
-                    $title = (string)$title;                    
+                    $this->postContentArray['post_title'] = (string)$title;                    
                 }
                 else{
-                    $title = '';
+                    $this->postContentArray['post_title'] = '';
                 }
             }        
             //If div ids are given then we need to retreive only those div data            
@@ -367,46 +409,55 @@ if ( !class_exists('BlogImporter') ) {
                     }else{
                         //need to place error here
                         $this->appError = $this->my_error('e_divcontent');
-                        return;
+                        return false;
                     }                    
                 }
                 if(empty($totalDivContent)){
                     $this->appError = $this->my_error('e_divcontent');
-                    return;
-                }else {
-                     
-                    $my_post['post_content'] = $cross_post_info.$this->cleanHTML($totalDivContent);
+                    return false;
+                }else {                     
+                    $this->postContentArray['post_content'] = $cross_post_info.$this->cleanHTML($totalDivContent);
                 }
             } else {
-                $my_post['post_content'] = $cross_post_info.$this->cleanHTML($content);
-            }            
-            $my_post['post_title'] = trim(strip_tags($title));
-            $my_post['post_name'] = trim(strip_tags($title));            
+                $this->postContentArray['post_content'] = $cross_post_info.$this->cleanHTML($content);
+            }
+            return true;
+        }
+        /**
+         * Insert a post with prepared post_array
+         * @return  int|false The post ID on success false on failure
+         * 
+         */
+        function get_postID() {
+            // this gets the content AND imports the post because we have to build $this->filearr as we go so we can find the new post IDs of files'
+            $post_id = '';
+            $this->postContentArray['post_title'] = trim(strip_tags($this->postContentArray['post_title']));
+            $this->postContentArray['post_name'] = $this->postContentArray['post_title'];            
             // post type
-            $my_post['post_type'] = "post";
+            $this->postContentArray['post_type'] = "post";
             //$my_post['post_parent'] lets make this as 0
-            $my_post['post_date'] = date("Y-m-d H:i:s", time());
-            $my_post['post_date_gmt'] = date("Y-m-d H:i:s", time());
+            $this->postContentArray['post_date'] = date("Y-m-d H:i:s", time());
+            $this->postContentArray['post_date_gmt'] = date("Y-m-d H:i:s", time());
             // status
-            $my_post['post_status'] = "publish";
+            $this->postContentArray['post_status'] = "publish";
             // author
             $currentuser = wp_get_current_user();
             $post_author = $currentuser->ID;
-            $my_post['post_author'] = $post_author;              
+            $this->postContentArray['post_author'] = $post_author;              
             if(empty($this->appError)) {
-                $post_id = wp_insert_post($my_post);
+                $post_id = wp_insert_post($this->postContentArray);
+            }
+            if($post_id) {
+                $this->filearr[$post_id] = $this->postContentArray['post_content'];
+                return $post_id;
+            }else {
+                return false;
             }
             // handle errors
             if ( is_wp_error( $post_id ) ) {                 
                 return false;
-            }
-            if (!$post_id) {                
-                return false;
-            }
-            else {                
-                $this->filearr[$post_id] = $this->tempfile;
-                return $post_id;
-            }            
+            }     
+            
             
         }
         function install() {
