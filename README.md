@@ -3,7 +3,7 @@ wordpress
 
 wordpress plugin
 
-This plugin requires works with wordpress 4.0 and later versions
+This plugin requires wordpress 4.0 and later versions
 
 CrossPost plugin for all blogs 
 
