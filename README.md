@@ -25,3 +25,17 @@ This Plugin imports any blog page content inot your wordpress post. It takes URL
 3. If you want to pick specified content from the page, give respective div ids as input to the text.
 4. If you wish to pick content from multiple divs specify the ids with comma seperator.
 5. Click on publish button to import the content into your wordpress blog as post.
+
+
+zip.vbs and compressFile.sh are script files which takes the folder as input and zip the files
+
+Usage of zib.vbs
+Download the file from here into local machine.
+go the path that locates the file through command prompt
+eg: C:\Users> CScript "C:\foldername or filename to zip" "C:\newzipfilename.zip"
+You can specify your own paths and directories
+
+Usage of compressFile.sh
+Download the file from here into local machine.
+go the path that locates the file through command prompt
+eg: ./compressFile.sh "folder or file absolutepath" "newzipfilename.tar"
